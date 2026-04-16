@@ -503,6 +503,7 @@ dependencies = [
  "rayon",
  "tempfile",
  "tokio",
+ "tokio-stream",
  "tonic",
  "tonic-build",
 ]

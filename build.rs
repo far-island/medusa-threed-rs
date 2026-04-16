@@ -10,6 +10,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 format!("{proto_root}/farisland/threed/v1/point_cloud.proto"),
                 format!("{proto_root}/farisland/threed/v1/mesh.proto"),
                 format!("{proto_root}/farisland/threed/v1/threed_scan.proto"),
+                format!("{proto_root}/farisland/threed/v1/metrology_callback.proto"),
                 format!("{proto_root}/farisland/module/v1/module_registry.proto"),
                 format!("{proto_root}/farisland/common/v1/identifiers.proto"),
             ],
