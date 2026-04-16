@@ -1,0 +1,91 @@
+// Mesh generation service — surface reconstruction from point clouds.
+//
+// Two algorithms are available:
+//   1. Delaunay triangulation (Bowyer-Watson) — general-purpose, slower.
+//   2. Grid meshing — optimised for 2.5D laser scanner data, much faster.
+//
+// Both accept a point cloud and return a triangle mesh suitable for
+// rendering.  The client converts MeshData to its native mesh format
+// (e.g. JavaFX TriangleMesh, or GPU buffers in a future UI).
+//
+// Replaces: Delaunator.java, GridMesher.java, PCDViewer.toMesh()
+
+syntax = "proto3";
+
+package farisland.threed.v1;
+
+option java_package = "com.farisland.grpc.threed.v1";
+option java_multiple_files = true;
+
+import "farisland/threed/v1/point_cloud_types.proto";
+
+// ---------------------------------------------------------------------------
+// Service
+// ---------------------------------------------------------------------------
+
+service MeshService {
+  // Delaunay triangulation (Bowyer-Watson algorithm).
+  // Operates on the 2D XY projection of the point cloud — Z values are
+  // preserved in the output vertices but do not affect triangulation.
+  // Suitable for general point sets.
+  rpc Triangulate(TriangulateRequest) returns (TriangulateResponse);
+
+  // Grid-based surface meshing.
+  // Projects points onto a regular XY grid, averages Z per cell,
+  // then connects adjacent occupied cells with triangles.
+  // Much faster and more robust than Delaunay for 2.5D scanner data.
+  rpc GridMesh(GridMeshRequest) returns (GridMeshResponse);
+}
+
+// ---------------------------------------------------------------------------
+// Messages — Triangulate (Delaunay)
+// ---------------------------------------------------------------------------
+
+message TriangulateRequest {
+  // Input point cloud.
+  PointCloudChunk points = 1;
+}
+
+message TriangulateResponse {
+  // Resulting triangle mesh.
+  MeshData mesh = 1;
+
+  // Number of triangles generated.
+  int32 triangle_count = 2;
+
+  // Number of unique vertices in the mesh.
+  int32 vertex_count = 3;
+}
+
+// ---------------------------------------------------------------------------
+// Messages — GridMesh
+// ---------------------------------------------------------------------------
+
+message GridMeshRequest {
+  // Input point cloud.
+  PointCloudChunk points = 1;
+
+  // Grid cell size in the same units as point coordinates (typically mm).
+  // Smaller values produce more detailed meshes but take longer.
+  double grid_step = 2;
+
+  // Maximum gap to bridge between occupied cells, in grid units.
+  // E.g. max_gap=2 means triangles can span 1 empty cell.
+  // Higher values fill holes but may create artifacts.
+  int32 max_gap = 3;
+}
+
+message GridMeshResponse {
+  // Resulting triangle mesh.
+  MeshData mesh = 1;
+
+  // Grid dimensions used.
+  int32 grid_cols = 2;
+  int32 grid_rows = 3;
+
+  // Number of triangles generated.
+  int32 triangle_count = 4;
+
+  // Number of unique vertices in the mesh.
+  int32 vertex_count = 5;
+}

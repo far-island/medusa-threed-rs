@@ -1,0 +1,160 @@
+// Point cloud I/O and processing service.
+//
+// Handles file loading (PCD format, binary and ASCII), file export
+// (PTX format), bounding box computation, and voxel-grid resampling.
+//
+// These are stateless operations — the client holds the point cloud
+// in memory (or passes it per-request).  The Rust implementation may
+// cache loaded files for performance but the API does not require it.
+//
+// Replaces: DataReader.java, PointCloud.saveToFile(),
+//           ScaleConfiguration.java, VolumeResampler.java
+
+syntax = "proto3";
+
+package farisland.threed.v1;
+
+option java_package = "com.farisland.grpc.threed.v1";
+option java_multiple_files = true;
+
+import "farisland/threed/v1/point_cloud_types.proto";
+
+// ---------------------------------------------------------------------------
+// Service
+// ---------------------------------------------------------------------------
+
+service PointCloudService {
+  // Load a point cloud from a PCD file (binary or ASCII auto-detected).
+  // Replaces DataReader.openFile().
+  rpc LoadPCD(LoadPCDRequest) returns (LoadPCDResponse);
+
+  // Export a point cloud to PTX format.
+  // Replaces PointCloud.saveToFile().
+  rpc ExportPTX(ExportPTXRequest) returns (ExportPTXResponse);
+
+  // Compute bounding box and statistics for a point cloud.
+  // Replaces ScaleConfiguration center-of-mass and bounding-box logic.
+  rpc GetStatistics(GetStatisticsRequest) returns (GetStatisticsResponse);
+
+  // Voxel-grid downsampling.
+  // Replaces VolumeResampler.resample().
+  rpc Resample(ResampleRequest) returns (ResampleResponse);
+
+  // Apply Z-based colormap to a point cloud.
+  // Replaces the inline colormap logic scattered through PCDViewer
+  // and VolumeResampler.
+  rpc ApplyColormap(ApplyColormapRequest) returns (ApplyColormapResponse);
+}
+
+// ---------------------------------------------------------------------------
+// Messages — LoadPCD
+// ---------------------------------------------------------------------------
+
+message LoadPCDRequest {
+  // Absolute path to the PCD file.
+  string file_path = 1;
+}
+
+message LoadPCDResponse {
+  // The loaded point cloud.
+  PointCloudChunk points = 1;
+
+  // Maximum Z value found (used for colormap scaling).
+  float max_z = 2;
+
+  // File format detected.
+  PCDFormat format = 3;
+}
+
+enum PCDFormat {
+  PCD_FORMAT_UNSPECIFIED = 0;
+  PCD_FORMAT_BINARY = 1;
+  PCD_FORMAT_ASCII = 2;
+}
+
+// ---------------------------------------------------------------------------
+// Messages — ExportPTX
+// ---------------------------------------------------------------------------
+
+message ExportPTXRequest {
+  // Points to export.
+  PointCloudChunk points = 1;
+
+  // Output file path.
+  string output_path = 2;
+}
+
+message ExportPTXResponse {
+  bool success = 1;
+  string error_message = 2;
+  // Number of points written.
+  int32 points_written = 3;
+}
+
+// ---------------------------------------------------------------------------
+// Messages — GetStatistics
+// ---------------------------------------------------------------------------
+
+message GetStatisticsRequest {
+  // Points to analyse.
+  PointCloudChunk points = 1;
+}
+
+message GetStatisticsResponse {
+  PointCloudStatistics statistics = 1;
+
+  // Display size hint (minimum inter-point distance estimate).
+  // Used by the viewer to set initial voxel/box size.
+  // Replaces ScaleConfiguration.getRadius().
+  double display_size = 2;
+
+  // Raw scale factor (max absolute coordinate).
+  // Replaces ScaleConfiguration.getRawScaleFactor().
+  double raw_scale_factor = 3;
+}
+
+// ---------------------------------------------------------------------------
+// Messages — Resample
+// ---------------------------------------------------------------------------
+
+message ResampleRequest {
+  // Input points.
+  PointCloudChunk points = 1;
+
+  // Voxel grid size (same units as coordinates, typically mm).
+  float voxel_size = 2;
+
+  // Grid dimension limit per axis.  Safety cap to prevent OOM.
+  // Default: 500 (matches legacy VolumeResampler).
+  int32 max_grid_dim = 3;
+}
+
+message ResampleResponse {
+  // Downsampled points.
+  PointCloudChunk points = 1;
+
+  // Number of input points.
+  int32 input_count = 2;
+
+  // Number of output points (occupied voxels).
+  int32 output_count = 3;
+}
+
+// ---------------------------------------------------------------------------
+// Messages — ApplyColormap
+// ---------------------------------------------------------------------------
+
+message ApplyColormapRequest {
+  // Input points (positions only; existing colors ignored).
+  PointCloudChunk points = 1;
+
+  // Z range for colormap scaling.
+  // If max_z <= min_z, auto-detect from the point cloud.
+  float min_z = 2;
+  float max_z = 3;
+}
+
+message ApplyColormapResponse {
+  // Points with RGB colors set from the Z-based colormap.
+  PointCloudChunk points = 1;
+}

@@ -1,0 +1,88 @@
+// Shared types for the 3D module domain services.
+//
+// These types represent the point cloud and mesh data structures
+// exchanged between Rust compute services and Java/external clients.
+// They are intentionally transport-friendly (flat packed arrays)
+// rather than mirroring the Java object model.
+
+syntax = "proto3";
+
+package farisland.threed.v1;
+
+option java_package = "com.farisland.grpc.threed.v1";
+option java_multiple_files = true;
+
+// ---------------------------------------------------------------------------
+// Point cloud data
+// ---------------------------------------------------------------------------
+
+// A chunk of point cloud data.  Used for both unary and streaming RPCs.
+// All arrays are parallel: positions[i*3..i*3+2] corresponds to
+// colors[i*3..i*3+2] and normals[i*3..i*3+2].
+message PointCloudChunk {
+  // Flat XYZ triples: [x0, y0, z0, x1, y1, z1, ...].
+  // Length must be divisible by 3.
+  repeated float positions = 1 [packed = true];
+
+  // Flat RGB triples: [r0, g0, b0, r1, g1, b1, ...].
+  // Values 0-255.  Empty if no color data.
+  repeated int32 colors = 2 [packed = true];
+
+  // Flat normal triples: [nx0, ny0, nz0, ...].
+  // Empty if no normal data.
+  repeated float normals = 3 [packed = true];
+}
+
+// ---------------------------------------------------------------------------
+// Mesh data
+// ---------------------------------------------------------------------------
+
+// Triangle mesh suitable for rendering.
+// The client (JavaFX or future React/Slint UI) converts this to its
+// native mesh format.
+message MeshData {
+  // Flat vertex positions: [x0, y0, z0, x1, y1, z1, ...].
+  repeated float vertices = 1 [packed = true];
+
+  // Face indices: [v0a, v0b, v0c, v1a, v1b, v1c, ...].
+  // Each triple references an index into the vertices array (vertex index,
+  // not float index — vertex i starts at vertices[i*3]).
+  repeated int32 faces = 2 [packed = true];
+
+  // Texture coordinates: [u0, v0, u1, v1, ...].
+  // One pair per vertex.  Empty if untextured.
+  repeated float tex_coords = 3 [packed = true];
+}
+
+// ---------------------------------------------------------------------------
+// Bounding box / statistics
+// ---------------------------------------------------------------------------
+
+// Axis-aligned bounding box with statistics.
+message PointCloudStatistics {
+  double min_x = 1;
+  double max_x = 2;
+  double min_y = 3;
+  double max_y = 4;
+  double min_z = 5;
+  double max_z = 6;
+
+  // Center of mass.
+  double center_x = 7;
+  double center_y = 8;
+  double center_z = 9;
+
+  int32 point_count = 10;
+}
+
+// ---------------------------------------------------------------------------
+// Finder strategy (metrology)
+// ---------------------------------------------------------------------------
+
+// Detection mode for the laser line profile finder.
+// Maps to com.farisland.farvision.libraries.metrology.analyzer.finder.FinderStrategy.
+enum FinderStrategy {
+  FINDER_STRATEGY_UNSPECIFIED = 0;
+  FINDER_STRATEGY_BLACK_ON_WHITE = 1;
+  FINDER_STRATEGY_WHITE_ON_BLACK = 2;
+}

@@ -1,0 +1,71 @@
+// Metrology callback service — temporary Java-side gRPC wrapper.
+//
+// During migration Phase 2-3, the HDetector (laser line profile
+// detection) remains in Java. Rust calls this service on :50051
+// to get profile data from an image, then does the polar-to-cartesian
+// conversion itself.
+//
+// This service will be removed when HDetector is ported to Rust
+// natively (Phase 4b per MIGRATION_PLAN_3D.md).
+//
+// Implemented by: medusa-core (Java, wraps HDetector + OpenCV)
+// Called by: medusa-threed-rs (Rust, ThreeDScanService)
+
+syntax = "proto3";
+
+package farisland.threed.v1;
+
+option java_package = "com.farisland.grpc.threed.v1";
+option java_multiple_files = true;
+
+import "farisland/threed/v1/point_cloud_types.proto";
+
+// ---------------------------------------------------------------------------
+// Service (Java-side, consumed by Rust)
+// ---------------------------------------------------------------------------
+
+service MetrologyCallbackService {
+  // Detect laser line profile in an image.
+  // Java loads the image via OpenCV, runs HDetector, returns the profile.
+  rpc DetectProfile(DetectProfileRequest) returns (DetectProfileResponse);
+}
+
+// ---------------------------------------------------------------------------
+// Messages
+// ---------------------------------------------------------------------------
+
+message DetectProfileRequest {
+  // Absolute path to the image file (PNG).
+  // Java-side will call OpenCv.loadMatFromFile(path, false).
+  string image_path = 1;
+
+  // Decimation factor for the detector.
+  // Passed to Detector.detect(null, mat, decimation).
+  int32 decimation = 2;
+
+  // Detection mode.
+  FinderStrategy strategy = 3;
+}
+
+message DetectProfileResponse {
+  // Left/upper profile: pixel positions along the scan line.
+  // Array index = row in image. Value = column of detected edge.
+  // 0 means no detection at that row.
+  repeated double left_upper_profile = 1 [packed = true];
+
+  // Right/lower profile (second edge, opposite side).
+  repeated double right_lower_profile = 2 [packed = true];
+
+  // Step size between profile samples (from Profile.getStep()).
+  double step = 3;
+
+  // Height of the scan area in pixels (Profile.getScanArea().getHeight()).
+  // Used to compute the center offset: c = scan_area_height / 2.
+  double scan_area_height = 4;
+
+  // True if detection succeeded.
+  bool success = 5;
+
+  // Error message if success == false.
+  string error_message = 6;
+}

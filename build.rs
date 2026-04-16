@@ -1,5 +1,6 @@
 fn main() -> Result<(), Box<dyn std::error::Error>> {
-    let proto_root = "../medusa-protos/src/main/proto";
+    // Proto files are vendored in the crate under proto/ for portable builds.
+    let proto_root = "proto";
 
     tonic_build::configure()
         .build_server(true)

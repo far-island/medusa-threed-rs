@@ -1,0 +1,191 @@
+// Module registry — discovery and registration.
+//
+// In the legacy system, modules are discovered via a text file
+// `installedmodules` + Java reflection. In the new architecture,
+// modules (Java or Rust) register themselves over gRPC, declaring
+// their identity, capabilities, and endpoint.
+//
+// The registry lives in the process that acts as the "core" at any
+// given migration phase — initially Java, eventually Rust.
+
+syntax = "proto3";
+
+package farisland.module.v1;
+
+option java_package = "com.farisland.grpc.module.v1";
+option java_multiple_files = true;
+
+import "farisland/common/v1/identifiers.proto";
+
+// ---------------------------------------------------------------------------
+// Service
+// ---------------------------------------------------------------------------
+
+service ModuleRegistryService {
+  // A module announces itself to the core. Called at startup by each module
+  // (Rust process registering into Java core, or vice versa during migration).
+  rpc RegisterModule(RegisterModuleRequest) returns (RegisterModuleResponse);
+
+  // A module is going away (clean shutdown, hot-unplug).
+  rpc UnregisterModule(UnregisterModuleRequest) returns (UnregisterModuleResponse);
+
+  // List all currently registered modules with their metadata and state.
+  rpc ListModules(ListModulesRequest) returns (ListModulesResponse);
+
+  // Get full info for a single module.
+  rpc GetModule(GetModuleRequest) returns (GetModuleResponse);
+
+  // Get the currently active (foreground) module.
+  rpc GetCurrentModule(GetCurrentModuleRequest) returns (GetCurrentModuleResponse);
+
+  // Switch the foreground module.
+  // Pauses the current module, starts the target if not yet loaded,
+  // then resumes it.  Mirrors App.setCurrentModule(String).
+  rpc SetCurrentModule(SetCurrentModuleRequest) returns (SetCurrentModuleResponse);
+}
+
+// ---------------------------------------------------------------------------
+// Messages — Registration
+// ---------------------------------------------------------------------------
+
+message RegisterModuleRequest {
+  // Unique module identifier (e.g. "ThreeD", "IO").
+  string module_id = 1;
+
+  // Human-readable display name (e.g. "3D Scanner", "I/O").
+  string module_name = 2;
+
+  // Semantic version string (e.g. "1.2.0").
+  string version = 3;
+
+  // gRPC endpoint where this module's lifecycle/persistence services
+  // are reachable.  For in-process Java modules during Phase 1 this
+  // can be empty (calls stay in-process).
+  // Format: "host:port" (e.g. "localhost:50053").
+  string grpc_endpoint = 4;
+
+  // Capabilities this module declares.  Allows the core to know what
+  // a module can do without hard-coding module knowledge.
+  repeated ModuleCapability capabilities = 5;
+
+  // Toolbar metadata — icon and display order for the module selector.
+  ToolbarInfo toolbar_info = 6;
+}
+
+message RegisterModuleResponse {
+  bool success = 1;
+
+  // Configuration assigned by the core (e.g. allocated port ranges,
+  // settings root path, current user info).
+  AssignedConfig config = 2;
+
+  // Human-readable error if success == false.
+  string error_message = 3;
+}
+
+message UnregisterModuleRequest {
+  farisland.common.v1.ModuleId module_id = 1;
+}
+
+message UnregisterModuleResponse {}
+
+// ---------------------------------------------------------------------------
+// Messages — Query
+// ---------------------------------------------------------------------------
+
+message ListModulesRequest {}
+
+message ListModulesResponse {
+  repeated ModuleInfo modules = 1;
+}
+
+message GetModuleRequest {
+  farisland.common.v1.ModuleId module_id = 1;
+}
+
+message GetModuleResponse {
+  ModuleInfo module = 1;
+}
+
+message GetCurrentModuleRequest {}
+
+message GetCurrentModuleResponse {
+  // Absent if no module is currently active.
+  ModuleInfo module = 1;
+}
+
+message SetCurrentModuleRequest {
+  farisland.common.v1.ModuleId module_id = 1;
+}
+
+message SetCurrentModuleResponse {
+  // The module that is now active after the switch.
+  ModuleInfo active_module = 1;
+
+  // The module that was paused (if any).
+  farisland.common.v1.ModuleId previous_module_id = 2;
+}
+
+// ---------------------------------------------------------------------------
+// Supporting types
+// ---------------------------------------------------------------------------
+
+// Full snapshot of a registered module.
+message ModuleInfo {
+  string module_id = 1;
+  string module_name = 2;
+  string version = 3;
+  string grpc_endpoint = 4;
+  repeated ModuleCapability capabilities = 5;
+  farisland.common.v1.ModuleState state = 6;
+  ToolbarInfo toolbar_info = 7;
+
+  // Whether the module's model has unsaved changes.
+  bool has_pending_changes = 8;
+}
+
+// A capability a module declares.
+// Extensible: new capabilities can be added without changing the proto.
+enum ModuleCapability {
+  MODULE_CAPABILITY_UNSPECIFIED = 0;
+
+  // Module has a visual panel (ModuleView).
+  MODULE_CAPABILITY_HAS_VIEW = 1;
+
+  // Module participates in composite view (implements Compositable).
+  MODULE_CAPABILITY_COMPOSITABLE = 2;
+
+  // Module has persistent state (WritableModel).
+  MODULE_CAPABILITY_PERSISTENT_STATE = 3;
+
+  // Module wants keyboard events (implements KeyboardListener).
+  MODULE_CAPABILITY_KEYBOARD_LISTENER = 4;
+
+  // Module needs post-init with runlevel (implements Startupper).
+  MODULE_CAPABILITY_POST_INIT = 5;
+
+  // Module uses camera access.
+  MODULE_CAPABILITY_CAMERA = 6;
+
+  // Module uses node system (NodeManagerInterface).
+  MODULE_CAPABILITY_NODES = 7;
+}
+
+// Toolbar button metadata for the module selector UI.
+message ToolbarInfo {
+  // Icon resource path (skin-aware — the UI resolves the actual asset).
+  string icon_path = 1;
+
+  // Display order in the toolbar (lower = further left).
+  int32 sort_order = 2;
+}
+
+// Configuration the core assigns to a module upon registration.
+message AssignedConfig {
+  // Current settings root path (active project/working directory).
+  string settings_root = 1;
+
+  // Current user info.
+  string user_id = 2;
+  farisland.common.v1.UserLevel user_level = 3;
+}

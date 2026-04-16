@@ -1,0 +1,142 @@
+// 3D scanning service — profile detection and point cloud generation.
+//
+// This is the compute-heavy core of the 3D module.  It loads scan images,
+// runs the metrology detector (laser line profile extraction), and
+// converts detected profiles into 3D point clouds using rotation angle
+// and pixel density calibration parameters.
+//
+// During migration Phase 4a, the metrology detector call is proxied
+// back to Java via gRPC.  In Phase 4b it runs natively in Rust.
+//
+// Replaces: ThreeDController.scanAll(), ThreeDController.scanOne()
+
+syntax = "proto3";
+
+package farisland.threed.v1;
+
+option java_package = "com.farisland.grpc.threed.v1";
+option java_multiple_files = true;
+
+import "farisland/threed/v1/point_cloud_types.proto";
+
+// ---------------------------------------------------------------------------
+// Service
+// ---------------------------------------------------------------------------
+
+service ThreeDScanService {
+  // Scan all slices in a dataset.
+  // Returns a stream of progress updates, each containing a chunk of
+  // newly detected points.  The client accumulates chunks to build
+  // the full point cloud incrementally (mirrors the existing Java
+  // behaviour where scanAll runs on a background thread and calls
+  // PointCloud.addPoints per slice).
+  rpc ScanAll(ScanAllRequest) returns (stream ScanProgress);
+
+  // Scan a single slice.  Returns the detected points in one shot.
+  rpc ScanOne(ScanOneRequest) returns (ScanOneResponse);
+
+  // List available datasets (directories of PNG slices).
+  // Replaces the dataset discovery logic in ThreeDController.onPostInit.
+  rpc ListDatasets(ListDatasetsRequest) returns (ListDatasetsResponse);
+}
+
+// ---------------------------------------------------------------------------
+// Messages — ScanAll
+// ---------------------------------------------------------------------------
+
+message ScanAllRequest {
+  // Absolute path to the dataset directory containing PNG slice images.
+  string dataset_path = 1;
+
+  // Decimation factor for the metrology detector.
+  // Maps to ThreeDModel.decimation.
+  int32 decimation = 2;
+
+  // Calibration: mm per pixel in the horizontal scan direction.
+  double pixel_density_horizontal = 3;
+
+  // Calibration: mm per pixel in the vertical scan direction.
+  double pixel_density_vertical = 4;
+
+  // Detection mode for the profile finder.
+  FinderStrategy strategy = 5;
+}
+
+message ScanProgress {
+  // Index of the slice just scanned (0-based).
+  int32 slice_index = 1;
+
+  // Total number of slices in the dataset.
+  int32 slices_total = 2;
+
+  // Slice angle in radians (extracted from filename).
+  double slice_angle = 3;
+
+  // Points detected in this slice.
+  PointCloudChunk points = 4;
+}
+
+// ---------------------------------------------------------------------------
+// Messages — ScanOne
+// ---------------------------------------------------------------------------
+
+message ScanOneRequest {
+  // Absolute path to the PNG slice image.
+  string slice_path = 1;
+
+  // Rotation angle of this slice in radians.
+  double angle = 2;
+
+  // Calibration parameters.
+  double pixel_density_horizontal = 3;
+  double pixel_density_vertical = 4;
+
+  // Detection mode.
+  FinderStrategy strategy = 5;
+}
+
+message ScanOneResponse {
+  // Points detected in the slice.
+  PointCloudChunk points = 1;
+}
+
+// ---------------------------------------------------------------------------
+// Messages — ListDatasets
+// ---------------------------------------------------------------------------
+
+message ListDatasetsRequest {
+  // Root directory to search for datasets.
+  // If empty, uses the default datasets root from module configuration.
+  string root_path = 1;
+}
+
+message ListDatasetsResponse {
+  repeated DatasetInfo datasets = 1;
+}
+
+// Metadata for a scan dataset.
+message DatasetInfo {
+  // Dataset directory name (e.g. "20260415_calibration").
+  string name = 1;
+
+  // Absolute path to the dataset directory.
+  string path = 2;
+
+  // Number of slice images found.
+  int32 slice_count = 3;
+
+  // Slices with their angles, ordered by filename.
+  repeated SliceInfo slices = 4;
+}
+
+// Metadata for a single scan slice.
+message SliceInfo {
+  // Filename (e.g. "0.523598.png").
+  string filename = 1;
+
+  // Absolute path.
+  string path = 2;
+
+  // Rotation angle in radians (parsed from filename).
+  double angle = 3;
+}

@@ -1,0 +1,50 @@
+// Common identifier and state types shared across all Medusa gRPC services.
+//
+// These are the foundational vocabulary for the gRPC layer.
+// All services reference them — changes here affect every consumer.
+
+syntax = "proto3";
+
+package farisland.common.v1;
+
+option java_package = "com.farisland.grpc.common.v1";
+option java_multiple_files = true;
+
+// Universally unique reference to a module instance.
+message ModuleId {
+  // Machine-readable identifier (e.g. "IO", "Preferences", "ThreeD").
+  // Matches FarModule.getModuleId() in the legacy Java contract.
+  string id = 1;
+}
+
+// Runtime state of a module.
+// Maps to the (loaded, active) boolean pair in legacy FarModule.
+enum ModuleState {
+  MODULE_STATE_UNSPECIFIED = 0;
+
+  // Module class is registered but onStartup() has not been called yet.
+  MODULE_STATE_REGISTERED = 1;
+
+  // onStartup() completed — module is loaded but not the active (foreground) module.
+  MODULE_STATE_LOADED = 2;
+
+  // Module is the current foreground module (onResume() called, active == true).
+  MODULE_STATE_ACTIVE = 3;
+
+  // Module has been paused (onPause() called, active == false, still loaded).
+  MODULE_STATE_PAUSED = 4;
+
+  // Module has been shut down (onShutdown() called).
+  MODULE_STATE_SHUTDOWN = 5;
+}
+
+// User permission level.
+// Maps 1:1 to com.farisland.farvision.libraries.users.model.UserLevel.
+enum UserLevel {
+  USER_LEVEL_UNSPECIFIED = 0;
+  USER_LEVEL_GUEST = 1;       // UserLevel.GUEST (0)
+  USER_LEVEL_USER = 2;        // UserLevel.USER (2)
+  USER_LEVEL_POWERUSER = 3;   // UserLevel.POWERUSER (4)
+  USER_LEVEL_ADMINISTRATOR = 4; // UserLevel.ADMINISTRATOR (6)
+  USER_LEVEL_DEVELOPER = 5;   // UserLevel.DEVELOPER (8)
+}
