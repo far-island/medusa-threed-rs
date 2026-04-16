@@ -1,11 +1,16 @@
 mod colormap;
+mod delaunator;
+mod grid_mesher;
+mod mesh_service;
 mod pcd;
 mod proto;
 mod resample;
 mod service;
 mod statistics;
 
+use proto::farisland::threed::v1::mesh_service_server::MeshServiceServer;
 use proto::farisland::threed::v1::point_cloud_service_server::PointCloudServiceServer;
+use mesh_service::MeshServiceImpl;
 use service::PointCloudServiceImpl;
 use tonic::transport::Server;
 
@@ -19,7 +24,7 @@ const _JAVA_GRPC_PORT: u16 = 50051;
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let addr = format!("0.0.0.0:{RUST_GRPC_PORT}").parse()?;
 
-    println!("[medusa-threed-rs] Starting PointCloudService on {addr}");
+    println!("[medusa-threed-rs] Starting PointCloudService + MeshService on {addr}");
 
     // TODO: Register with Java core via ModuleRegistryService.RegisterModule
     // on :50051 once the Java gRPC adapter is running.
@@ -27,6 +32,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     Server::builder()
         .add_service(PointCloudServiceServer::new(PointCloudServiceImpl))
+        .add_service(MeshServiceServer::new(MeshServiceImpl))
         .serve(addr)
         .await?;
 
