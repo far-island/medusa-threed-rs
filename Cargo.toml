@@ -1,0 +1,18 @@
+[package]
+name = "medusa-threed-rs"
+version = "0.1.0"
+edition = "2024"
+description = "Rust gRPC services for medusa-3d module"
+repository = "https://github.com/far-island/medusa-threed-rs"
+
+[dependencies]
+tonic = "0.12"
+prost = "0.13"
+tokio = { version = "1", features = ["full"] }
+rayon = "1.10"
+
+[build-dependencies]
+tonic-build = "0.12"
+
+[dev-dependencies]
+tempfile = "3"
