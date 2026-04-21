@@ -193,8 +193,14 @@ impl ThreeDScanService for ThreeDScanServiceImpl {
                     ))),
                 };
 
+                let is_fatal = progress.is_err();
                 if tx.send(progress).await.is_err() {
                     break; // client disconnected mid-send
+                }
+                if is_fatal {
+                    // Trailing Status is terminal in gRPC semantics — do not
+                    // keep emitting ScanProgress after an Err was sent.
+                    break;
                 }
             }
         });
