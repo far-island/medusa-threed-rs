@@ -106,27 +106,14 @@ impl ThreeDScanService for ThreeDScanServiceImpl {
         let pdv = req.pixel_density_vertical;
         let strategy = req.strategy;
 
-        // Discover slices
-        let datasets = crate::scan::list_datasets(Path::new(&dataset_path));
-
-        // We scan the first dataset found at the exact path, or treat the path
-        // itself as a dataset directory.
-        let slices = if let Some(ds) = datasets.into_iter().find(|d| d.path == dataset_path) {
-            ds.slices
-        } else {
-            // Treat the path itself as a dataset directory
-            let ds_info = crate::scan::list_datasets(
-                Path::new(&dataset_path).parent().unwrap_or(Path::new("/")),
-            );
-            ds_info
-                .into_iter()
-                .find(|d| d.path == dataset_path)
-                .map(|d| d.slices)
-                .unwrap_or_default()
-        };
+        // The Java client passes an absolute directory path whose direct
+        // children are `<angle>.png` slice files (legacy ThreeDController
+        // dataset shape). Enumerate that directory directly — no parent
+        // rescan.
+        let slices = crate::scan::list_slices_in_dir(Path::new(&dataset_path));
 
         let slices_total = slices.len() as i32;
-        let (tx, rx) = tokio::sync::mpsc::channel(32);
+        let (tx, rx) = tokio::sync::mpsc::channel::<Result<pb::ScanProgress, Status>>(32);
 
         // We need a reference to self that's 'static for the spawned task.
         // Clone what we need instead.
@@ -136,6 +123,13 @@ impl ThreeDScanService for ThreeDScanServiceImpl {
             let client_mutex = Mutex::new(metrology_client);
 
             for (idx, slice) in slices.into_iter().enumerate() {
+                // Client cancellation: when the JavaFX consumer drops the
+                // stream observer (panel dispose / user navigates away),
+                // the mpsc receiver closes. Skip remaining slices instead
+                // of continuing to hammer the Java callback server.
+                if tx.is_closed() {
+                    break;
+                }
                 let result = {
                     let mut guard = client_mutex.lock().await;
                     let client = match guard.as_mut() {
@@ -160,8 +154,13 @@ impl ThreeDScanService for ThreeDScanServiceImpl {
                 let progress = match result {
                     Ok(resp) => {
                         let resp = resp.into_inner();
-                        if resp.success {
-                            let pts = crate::scan::profile_to_points(
+                        // Both success and failure emit a ScanProgress for
+                        // this slice index. The failure case yields an
+                        // empty PointCloudChunk so the client can keep
+                        // slice_index contiguous against slices_total
+                        // (progress bars, slice counters).
+                        let pts = if resp.success {
+                            crate::scan::profile_to_points(
                                 &resp.left_upper_profile,
                                 &resp.right_lower_profile,
                                 resp.step,
@@ -169,31 +168,24 @@ impl ThreeDScanService for ThreeDScanServiceImpl {
                                 slice.angle,
                                 pdh,
                                 pdv,
-                            );
-
-                            Ok(pb::ScanProgress {
-                                slice_index: idx as i32,
-                                slices_total,
-                                slice_angle: slice.angle,
-                                points: Some(pb::PointCloudChunk {
-                                    positions: pts.positions,
-                                    colors: pts.colors,
-                                    normals: vec![],
-                                }),
-                            })
+                            )
                         } else {
-                            // Skip failed slice, report empty
-                            Ok(pb::ScanProgress {
-                                slice_index: idx as i32,
-                                slices_total,
-                                slice_angle: slice.angle,
-                                points: Some(pb::PointCloudChunk {
-                                    positions: vec![],
-                                    colors: vec![],
-                                    normals: vec![],
-                                }),
-                            })
-                        }
+                            crate::scan::ProfilePoints {
+                                positions: Vec::new(),
+                                colors: Vec::new(),
+                            }
+                        };
+
+                        Ok(pb::ScanProgress {
+                            slice_index: idx as i32,
+                            slices_total,
+                            slice_angle: slice.angle,
+                            points: Some(pb::PointCloudChunk {
+                                positions: pts.positions,
+                                colors: pts.colors,
+                                normals: Vec::new(),
+                            }),
+                        })
                     }
                     Err(e) => Err(Status::internal(format!(
                         "Detection failed for slice {}: {e}",
@@ -202,7 +194,7 @@ impl ThreeDScanService for ThreeDScanServiceImpl {
                 };
 
                 if tx.send(progress).await.is_err() {
-                    break; // client disconnected
+                    break; // client disconnected mid-send
                 }
             }
         });
