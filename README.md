@@ -49,46 +49,39 @@ OPTIONS
   --bind ADDR    Interface to bind. Default 127.0.0.1.
   --port N       TCP port to listen on. Default 50052.
                  Pass 0 to let the OS pick a free port; the actual port
-                 is reported in the ready-line on stderr.
+                 is reported in the ready-line on stdout.
   --help, -h     Print help and exit 0.
   --version, -V  Print version and exit 0.
 ```
 
 Unknown arguments cause exit code `2` with a usage message on stderr.
 
-### Ready-line on stderr
+### Ready signal on stdout
 
-After binding the listen socket and **before** accepting the first
-connection, the binary writes exactly this line on **stderr**, flushed:
-
-```
-[medusa-threed-rs] gRPC listening on :<PORT>
-```
-
-Followed by a second line for diagnostics:
+After binding the listen socket and **immediately before** entering the
+serve loop, the binary writes exactly this line on **stdout**, flushed:
 
 ```
-[medusa-threed-rs] bind=<ADDR> port=<PORT>
+READY port=<PORT>
 ```
 
-The parent should:
+This is the **first and only** stdout line written by the running server
+(`--help` / `--version` use stdout but exit before serving). The parent
+should:
 
-1. Spawn the process with stderr piped.
-2. Read stderr line-by-line until it sees a line matching the regex
-   `\[medusa-threed-rs\] gRPC listening on :(\d+)`.
+1. Spawn the process with stdout and stderr piped.
+2. Read stdout line-by-line until it sees a line matching the regex
+   `^READY port=(\d+)$`.
 3. Capture the matched port (useful when `--port 0` is used).
 4. Connect the gRPC client to `<bind>:<port>`.
 
-The parent must impose its own timeout on the read (recommended: 15 s
-cold start, 5 s warm). On timeout the parent should `destroyForcibly()`
-the process.
+The parent must impose its own timeout on the read (recommended: 10 s
+per orchestrator contract; 15 s for AIStation4070 cold-start with AV
+scan). On timeout the parent should `destroyForcibly()` the process.
 
-Anything written on stderr **before** the ready-line is informational and
-may be logged at a low level. After the ready-line, stderr carries
-shutdown breadcrumbs and panic backtraces — log at debug.
-
-`stdout` is reserved for `--help` / `--version` output; the running
-server writes nothing to stdout.
+`stderr` carries the structured log: a `bind=<ADDR> port=<PORT>` line
+right after `READY`, then shutdown breadcrumbs and any panic backtrace.
+All `stderr` lines are prefixed with `[medusa-threed-rs]`.
 
 ### Graceful shutdown
 
@@ -100,6 +93,7 @@ The binary shuts down cleanly when **any** of the following occurs:
 | `SIGINT` / Ctrl-C    | Unix     | Same handling as SIGTERM.                      |
 | `Ctrl-C`             | Windows  | Console only.                                  |
 | `CTRL_BREAK_EVENT`   | Windows  | Sent via `GenerateConsoleCtrlEvent`.           |
+| `CTRL_CLOSE_EVENT`   | Windows  | Console window closed / parent kills console.  |
 | **stdin EOF**        | Both     | Parent closes the child's stdin handle.        |
 
 **Recommended parent strategy (cross-platform, no JNA / native code):**
@@ -127,13 +121,18 @@ ProcessBuilder pb = new ProcessBuilder(
 pb.redirectErrorStream(false);
 Process p = pb.start();
 
-// Read stderr until we see the ready-line.
-try (BufferedReader err = new BufferedReader(new InputStreamReader(p.getErrorStream()))) {
+// Read stdout until we see the ready signal (10 s timeout).
+int actualPort;
+try (BufferedReader out = new BufferedReader(new InputStreamReader(p.getInputStream()))) {
     String line;
-    while ((line = err.readLine()) != null) {
-        if (line.contains("gRPC listening on :")) break;
+    while ((line = out.readLine()) != null) {
+        if (line.startsWith("READY port=")) {
+            actualPort = Integer.parseInt(line.substring("READY port=".length()).trim());
+            break;
+        }
     }
 }
+// Drain stderr to a logger on a separate thread (structured log).
 
 // ... use the gRPC client ...
 

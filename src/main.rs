@@ -19,6 +19,8 @@ use service::PointCloudServiceImpl;
 use std::io::Write;
 use std::net::{IpAddr, SocketAddr};
 use std::process::ExitCode;
+
+const READY_LINE_PREFIX: &str = "READY port=";
 use tonic::transport::Server;
 use tower_http::cors::{Any, CorsLayer};
 use http::header::HeaderName;
@@ -82,9 +84,21 @@ async fn run(addr: SocketAddr) -> Result<(), Box<dyn std::error::Error>> {
     Ok(())
 }
 
+/// Emit the launcher ready signal.
+///
+/// Contract:
+///   - STDOUT (line-buffered, flushed): exactly `READY port=<N>\n` as the
+///     first and only stdout line written by the running server.  The Java
+///     launcher blocks reading stdout until it sees this line (10s timeout).
+///   - STDERR: a follow-up structured log line with bind details.  All other
+///     server output goes on stderr.
 fn emit_ready(addr: SocketAddr) {
+    {
+        let mut out = std::io::stdout().lock();
+        let _ = writeln!(out, "{}{}", READY_LINE_PREFIX, addr.port());
+        let _ = out.flush();
+    }
     let mut err = std::io::stderr().lock();
-    let _ = writeln!(err, "[medusa-threed-rs] gRPC listening on :{}", addr.port());
     let _ = writeln!(err, "[medusa-threed-rs] bind={} port={}", addr.ip(), addr.port());
     let _ = err.flush();
 }
@@ -119,12 +133,31 @@ async fn shutdown_signal() {
         }
     };
 
+    // Windows console-control: CTRL_BREAK_EVENT and CTRL_CLOSE_EVENT.
+    // CTRL_CLOSE_EVENT is what fires for a console process when its window
+    // is closed (the WM_CLOSE-equivalent for a console host) or when the
+    // parent terminates the console — the closest cross-process "please
+    // exit" Windows signal a console child receives without an attached
+    // console window.
     #[cfg(windows)]
     let other_signal = async {
-        if let Ok(mut s) = tokio::signal::windows::ctrl_break() {
-            s.recv().await;
-        } else {
-            std::future::pending::<()>().await;
+        let brk = async {
+            if let Ok(mut s) = tokio::signal::windows::ctrl_break() {
+                s.recv().await;
+            } else {
+                std::future::pending::<()>().await;
+            }
+        };
+        let close = async {
+            if let Ok(mut s) = tokio::signal::windows::ctrl_close() {
+                s.recv().await;
+            } else {
+                std::future::pending::<()>().await;
+            }
+        };
+        tokio::select! {
+            _ = brk => (),
+            _ = close => (),
         }
     };
 
@@ -174,8 +207,8 @@ fn print_help() {
            --help, -h     print this help\n  \
            --version, -V  print version\n\n\
          LAUNCHER CONTRACT:\n  \
-           ready-line on stderr: '[medusa-threed-rs] gRPC listening on :<port>'\n  \
-           shutdown: SIGTERM / SIGINT / CTRL_BREAK_EVENT / stdin EOF\n",
+           ready-line on stdout (first stdout line): 'READY port=<N>'\n  \
+           shutdown: SIGTERM / SIGINT / CTRL_BREAK_EVENT / CTRL_CLOSE_EVENT / stdin EOF\n",
         env!("CARGO_PKG_VERSION")
     );
 }
@@ -230,5 +263,13 @@ mod cli_tests {
     fn help_returns_none() {
         assert!(parse_args(args(&["--help"])).unwrap().is_none());
         assert!(parse_args(args(&["--version"])).unwrap().is_none());
+    }
+
+    /// Pin the launcher ready-line prefix so the protocol contract can't
+    /// drift accidentally — the Java side reads stdout looking for exactly
+    /// this prefix.
+    #[test]
+    fn ready_line_prefix_is_stable() {
+        assert_eq!(super::READY_LINE_PREFIX, "READY port=");
     }
 }

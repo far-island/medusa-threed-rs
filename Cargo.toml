@@ -1,6 +1,6 @@
 [package]
 name = "medusa-threed-rs"
-version = "0.1.0"
+version = "0.1.1"
 edition = "2024"
 description = "Rust gRPC services for medusa-3d module"
 repository = "https://github.com/far-island/medusa-threed-rs"
