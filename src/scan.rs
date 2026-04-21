@@ -23,10 +23,20 @@ pub struct SliceInfo {
 }
 
 /// Result of converting a profile to 3D points.
+///
+/// `colors` is left empty: the metrology detector has no per-point color
+/// data (HDetector yields a pixel-position profile, not pixel intensities),
+/// so the server emits no RGB. Java client lets the viewer apply its
+/// z-based colormap — which is the UX legacy produced visually, even if
+/// the legacy `new PPoint(x,y,z,222,222,222)` path stored those bytes into
+/// `normal_x/y/z` via the overload-resolution quirk (see medusa-3d issue
+/// #3). Emitting empty `colors` here converges the gRPC path with what the
+/// viewer actually renders and avoids baking the legacy bug into the wire.
 pub struct ProfilePoints {
     /// Flat xyz triples.
     pub positions: Vec<f32>,
-    /// Flat rgb triples (default grey 222,222,222).
+    /// Empty in the metrology pipeline; reserved for future detectors that
+    /// would supply real per-point color. See doc above.
     pub colors: Vec<i32>,
 }
 
@@ -121,7 +131,6 @@ pub fn profile_to_points(
     let cos_a = angle.cos();
 
     let mut positions = Vec::new();
-    let mut colors = Vec::new();
 
     let len = left_upper.len().min(right_lower.len());
 
@@ -134,7 +143,6 @@ pub fn profile_to_points(
             let y = r * cos_a;
 
             positions.extend_from_slice(&[x as f32, y as f32, z as f32]);
-            colors.extend_from_slice(&[222, 222, 222]);
         }
 
         // Right/lower profile
@@ -145,11 +153,49 @@ pub fn profile_to_points(
             let y = r * cos_a;
 
             positions.extend_from_slice(&[x as f32, y as f32, z as f32]);
-            colors.extend_from_slice(&[222, 222, 222]);
         }
     }
 
-    ProfilePoints { positions, colors }
+    ProfilePoints {
+        positions,
+        colors: Vec::new(),
+    }
+}
+
+/// List PNG slice files in a single directory.
+///
+/// The legacy Java pipeline treats "dataset path" as a directory of PNGs
+/// named `<angle_radians>.png`. This helper matches that contract exactly
+/// without the parent-directory rescan dance used by `list_datasets`.
+///
+/// Returns slices sorted by filename for deterministic stream ordering.
+pub fn list_slices_in_dir(dir: &Path) -> Vec<SliceInfo> {
+    let mut slices = Vec::new();
+    let entries = match std::fs::read_dir(dir) {
+        Ok(e) => e,
+        Err(_) => return slices,
+    };
+    for file in entries.flatten() {
+        let fpath = file.path();
+        if !fpath.is_file() {
+            continue;
+        }
+        let fname = fpath
+            .file_name()
+            .unwrap_or_default()
+            .to_string_lossy()
+            .to_string();
+        if fname.ends_with(".png") {
+            let angle = parse_angle_from_filename(&fname);
+            slices.push(SliceInfo {
+                filename: fname,
+                path: fpath.to_string_lossy().to_string(),
+                angle,
+            });
+        }
+    }
+    slices.sort_by(|a, b| a.filename.cmp(&b.filename));
+    slices
 }
 
 #[cfg(test)]
@@ -217,6 +263,14 @@ mod tests {
         // Right: r = (20 - 15) * 1 = 5, x = 5*sin(0) = 0, y = 5*cos(0) = 5, z = 0
         assert!((result.positions[3] - 0.0).abs() < 1e-6); // x
         assert!((result.positions[4] - 5.0).abs() < 1e-6); // y
+
+        // G1: no 222-gray emitted from the detector pipeline (medusa-3d
+        // issue #3). Colors stays empty; the client's viewer applies the
+        // z-based colormap it already used under legacy.
+        assert!(
+            result.colors.is_empty(),
+            "profile_to_points must emit empty colors (G1)"
+        );
     }
 
     #[test]
@@ -227,6 +281,7 @@ mod tests {
 
         // Row 0 skipped (left=0), row 1 produces 2 points
         assert_eq!(result.positions.len(), 6);
+        assert!(result.colors.is_empty());
     }
 
     #[test]
@@ -239,5 +294,54 @@ mod tests {
         // Left: x = 5*sin(pi/2) = 5, y = 5*cos(pi/2) ~ 0
         assert!((result.positions[0] - 5.0).abs() < 1e-6);
         assert!(result.positions[1].abs() < 1e-6);
+    }
+
+    #[test]
+    fn test_profile_to_points_empty_profile() {
+        let result = profile_to_points(&[], &[], 1.0, 30.0, 0.0, 1.0, 1.0);
+        assert!(result.positions.is_empty());
+        assert!(result.colors.is_empty());
+    }
+
+    #[test]
+    fn test_profile_to_points_no_detection_row() {
+        // All-zero profiles produce no points — matches legacy
+        // `if (leftUpperProfile[i] == 0) continue` in ThreeDController.
+        let left = vec![0.0, 0.0, 0.0];
+        let right = vec![0.0, 0.0, 0.0];
+        let result = profile_to_points(&left, &right, 1.0, 30.0, 0.0, 1.0, 1.0);
+        assert!(result.positions.is_empty());
+    }
+
+    #[test]
+    fn test_list_slices_in_dir_direct() {
+        let dir = tempfile::tempdir().unwrap();
+        fs::write(dir.path().join("0.0.png"), b"fake").unwrap();
+        fs::write(dir.path().join("1.5708.png"), b"fake").unwrap();
+        fs::write(dir.path().join("ignore.txt"), b"not a slice").unwrap();
+
+        let slices = list_slices_in_dir(dir.path());
+        assert_eq!(slices.len(), 2);
+        assert_eq!(slices[0].filename, "0.0.png");
+        assert_eq!(slices[1].filename, "1.5708.png");
+        assert!((slices[0].angle - 0.0).abs() < 1e-6);
+        assert!((slices[1].angle - 1.5708).abs() < 1e-4);
+    }
+
+    #[test]
+    fn test_list_slices_in_dir_nonexistent() {
+        let slices = list_slices_in_dir(Path::new("/nonexistent/xyz"));
+        assert!(slices.is_empty());
+    }
+
+    #[test]
+    fn test_list_slices_in_dir_skips_subdirs() {
+        let dir = tempfile::tempdir().unwrap();
+        fs::write(dir.path().join("0.0.png"), b"fake").unwrap();
+        std::fs::create_dir(dir.path().join("subdir.png")).unwrap();
+
+        let slices = list_slices_in_dir(dir.path());
+        assert_eq!(slices.len(), 1);
+        assert_eq!(slices[0].filename, "0.0.png");
     }
 }
