@@ -5,6 +5,7 @@ mod mesh_service;
 mod pcd;
 mod proto;
 mod resample;
+mod scale_configuration_service;
 mod scan;
 mod scan_service;
 mod service;
@@ -12,8 +13,10 @@ mod statistics;
 
 use proto::farisland::threed::v1::mesh_service_server::MeshServiceServer;
 use proto::farisland::threed::v1::point_cloud_service_server::PointCloudServiceServer;
+use proto::farisland::threed::v1::scale_configuration_service_server::ScaleConfigurationServiceServer;
 use proto::farisland::threed::v1::three_d_scan_service_server::ThreeDScanServiceServer;
 use mesh_service::MeshServiceImpl;
+use scale_configuration_service::ScaleConfigurationServiceImpl;
 use scan_service::ThreeDScanServiceImpl;
 use service::PointCloudServiceImpl;
 use std::io::Write;
@@ -77,6 +80,7 @@ async fn run(addr: SocketAddr) -> Result<(), Box<dyn std::error::Error>> {
         .add_service(tonic_web::enable(PointCloudServiceServer::new(PointCloudServiceImpl)))
         .add_service(tonic_web::enable(MeshServiceServer::new(MeshServiceImpl)))
         .add_service(tonic_web::enable(ThreeDScanServiceServer::new(ThreeDScanServiceImpl::new())))
+        .add_service(tonic_web::enable(ScaleConfigurationServiceServer::new(ScaleConfigurationServiceImpl::default())))
         .serve_with_incoming_shutdown(incoming, shutdown_signal())
         .await?;
 
