@@ -1,0 +1,86 @@
+// Scale-configuration policy service — incremental running-max aggregation.
+//
+// The viewer normalises every point-cloud chunk it receives so that the
+// largest absolute coordinate maps to a fixed viewer-side target
+// (legacy: MAX_ABS_COORDINATE).  As new chunks land, the running max
+// can only grow; the effective scale must be recomputed each time.
+//
+// The aggregation policy (today: max; future candidates: EMA over the
+// last N chunks, percentile, hysteresis to avoid flicker) lives
+// server-side.  The client is a dumb cumulative store: it holds the
+// previous running_max, sends the per-chunk contribution alongside it,
+// and applies the effective_scale the server returns.
+//
+// Stateless per call — no session id, no server-held per-client state.
+// First call: client sends running_max = 0.  Subsequent calls: client
+// sends the new_running_max it received from the previous response.
+//
+// maxAbsCoord (the normalisation target) is server-side policy and is
+// NOT part of the request.  Do NOT derive it as
+// `effective_scale * new_running_max` on the client — that couples the
+// client to the current server formula, and any future policy change
+// (clamp, floor, non-linear curve) would silently break the derivation.
+// If a viewer genuinely needs the target, add an informational
+// `max_abs_coord_policy` field in the response so the server remains
+// the source of truth.
+//
+// Replaces: ScaleConfiguration.update() incremental path in
+//           com.farisland.farvision.modules.threed.pcdviewer.controller.
+//           The one-shot bootstrap path (center-of-mass, radius,
+//           camera hints) is served by PointCloudService.GetStatistics
+//           in point_cloud.proto — this service covers the per-chunk
+//           update only.
+//
+// Decision date: 2026-04-22 (Strangler Fig Phase 3 LIVE).
+// Shape agreed with medusa-core: stateless + echo-back running_max +
+// per-service naming granularity (no catch-all ConfigService).
+
+syntax = "proto3";
+
+package farisland.threed.v1;
+
+option java_package = "com.farisland.grpc.threed.v1";
+option java_multiple_files = true;
+
+// ---------------------------------------------------------------------------
+// Service
+// ---------------------------------------------------------------------------
+
+service ScaleConfigurationService {
+  // Update the running max with a new chunk's contribution and return
+  // the effective scale to apply.  See file header for the stateless
+  // calling convention.
+  rpc ComputeScale(ComputeScaleRequest) returns (ComputeScaleResponse);
+}
+
+// ---------------------------------------------------------------------------
+// Messages
+// ---------------------------------------------------------------------------
+
+message ComputeScaleRequest {
+  // Per-chunk maximum of |x|, |y|, |z| across points newly added by
+  // the client in this tick.  NOT cumulative — the running maximum
+  // across all ticks is carried by running_max via the echo-back
+  // pattern.  The client computes this locally as
+  //   chunk_max = max over newPoints of max(|p.x|, |p.y|, |p.z|)
+  // before calling.  Must be >= 0.
+  double raw_scale_factor = 1;
+
+  // The running max the client holds from the previous response
+  // (new_running_max of the prior ComputeScale call).  Zero on the
+  // very first call of a session.
+  double running_max = 2;
+}
+
+message ComputeScaleResponse {
+  // Server-aggregated running max after applying the policy (today:
+  // max(raw_scale_factor, running_max); future: may be EMA or
+  // percentile).  The client stores this and passes it back on the
+  // next call.
+  double new_running_max = 1;
+
+  // The scale factor to apply when rendering.  Derived server-side
+  // from the configured normalisation target and the new running
+  // max.  The client multiplies point coordinates by this value.
+  double effective_scale = 2;
+}
