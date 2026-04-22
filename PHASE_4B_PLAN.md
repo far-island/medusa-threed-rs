@@ -167,22 +167,56 @@ dropping `eps_px` from 0.5 to 0.1 could cost another week.
 
 ## 6. Cutover — `metrology_callback.proto` (Option A)
 
-Per orchestrator decision: **deprecate, do not remove**.
+Per orchestrator decision: **deprecate, do not remove**. Exact wording and
+option placement below are pre-agreed with medusa-core — Phase 4b
+implementation PR must apply them verbatim (no paraphrasing):
+
+**Fix 1 — top-of-file comment.** Replace the existing
+`// This service will be removed when HDetector is ported to Rust natively
+(Phase 4b per MIGRATION_PLAN_3D.md).` line with:
+
+```
+// DEPRECATED in Phase 4b — see PHASE_4B_PLAN.md §6 for removal criteria.
+```
+
+**Fix 2 — explicit `deprecated` options.** Declare `option deprecated = true;`
+on both the service and the rpc (the double declaration is idiomatic and
+what proto-lint tooling picks up):
+
+```proto
+service MetrologyCallbackService {
+  option deprecated = true;
+
+  rpc DetectProfile(DetectProfileRequest) returns (DetectProfileResponse) {
+    option deprecated = true;
+  }
+}
+```
+
+**Fix 3 — doc-comment block above the service.** Insert immediately above the
+`service MetrologyCallbackService {` line, verbatim:
+
+```
+// DEPRECATED in Phase 4b (2026-04). Superseded by the in-process
+// hdetector-rs Rust crate consumed directly by medusa-threed-rs. Kept as a
+// runtime-flag escape hatch (medusa.threed.detector=java_callback) and
+// remains buildable during the deprecation window. Removal targeted
+// Phase 5, gated on: medusa.threed.detector defaulting to rust_native in
+// production for >=2 release cycles, AND zero parity fallbacks triggered
+// in that window.
+// See: medusa-threed-rs/PHASE_4B_PLAN.md §6
+```
+
+**Other §6 invariants (unchanged):**
 
 - `metrology_callback.proto` stays in `medusa-protos` and in this repo's
   `proto/` tree.
-- Service message gets a `// DEPRECATED: superseded by hdetector-rs crate
-  (Phase 4b). Removal targeted Phase 5.` comment.
-- `option deprecated = true;` is added on the service and on
-  `DetectProfile` for tooling signal.
 - Java-side implementation remains compilable and buildable; it is kept as
   an escape hatch behind the feature flag (§7).
 - No breaking change to any generated artifact. Downstream consumers that
   never flipped the flag keep working unchanged.
-
-Removal (Phase 5) is a separate ticket gated on: flag defaulting to
-`rust_native` in production for ≥2 release cycles with zero parity fallbacks
-triggered.
+- Removal (Phase 5) is a separate ticket gated on the criteria embedded in
+  Fix 3 above.
 
 ---
 
