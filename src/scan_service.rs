@@ -231,7 +231,13 @@ impl ThreeDScanService for ThreeDScanServiceImpl {
                 req.pixel_density_vertical,
                 req.strategy,
             )
-            .await?;
+            .await
+            .map_err(|e| {
+                Status::internal(format!(
+                    "Detection failed for slice {}: {e}",
+                    slice_name_for_error(&req.slice_path)
+                ))
+            })?;
 
         Ok(Response::new(pb::ScanOneResponse {
             points: Some(pb::PointCloudChunk {
@@ -403,6 +409,19 @@ mod slice_image_tests {
     }
 }
 
+/// Mirror `scan_all`'s error-description convention for `scan_one`:
+/// use just the filename, not the full path, so the message is the same
+/// shape across the two RPCs.  Falls back to the raw input when the
+/// path has no usable filename component (empty, ends in a separator,
+/// or is non-UTF-8) so the client still sees *something*.
+fn slice_name_for_error(slice_path: &str) -> String {
+    Path::new(slice_path)
+        .file_name()
+        .and_then(|n| n.to_str())
+        .map(|s| s.to_string())
+        .unwrap_or_else(|| slice_path.to_string())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -417,5 +436,34 @@ mod tests {
         assert_eq!(DEFAULT_PIXEL_DENSITY_HORIZONTAL, 0.005);
         assert_eq!(DEFAULT_PIXEL_DENSITY_VERTICAL, 0.005);
         assert_eq!(pb::FinderStrategy::BlackOnWhite as i32, 1);
+    }
+
+    #[test]
+    fn extracts_filename_from_absolute_path() {
+        assert_eq!(slice_name_for_error("/tmp/datasets/run42/0.523598.png"), "0.523598.png");
+    }
+
+    #[test]
+    fn extracts_filename_from_relative_path() {
+        assert_eq!(slice_name_for_error("run42/0.000000.png"), "0.000000.png");
+    }
+
+    #[test]
+    fn returns_raw_input_when_path_has_no_filename() {
+        // Path::new normalises a trailing slash away, so "/tmp/datasets/"
+        // still yields the last segment ("datasets"). Empty strings have
+        // no components at all and fall back to the raw input so the
+        // client error still carries *something*.
+        assert_eq!(slice_name_for_error(""), "");
+    }
+
+    #[test]
+    fn strips_trailing_slash_via_path_normalisation() {
+        assert_eq!(slice_name_for_error("/tmp/datasets/"), "datasets");
+    }
+
+    #[test]
+    fn handles_bare_filename() {
+        assert_eq!(slice_name_for_error("0.000000.png"), "0.000000.png");
     }
 }
