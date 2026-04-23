@@ -38,6 +38,14 @@ service ThreeDScanService {
   // List available datasets (directories of PNG slices).
   // Replaces the dataset discovery logic in ThreeDController.onPostInit.
   rpc ListDatasets(ListDatasetsRequest) returns (ListDatasetsResponse);
+
+  // Get default scan calibration parameters.  Clients populate their
+  // scan form with these values instead of hardcoding them — the
+  // legacy Java path reads the same values from ThreeDModel /
+  // ThreeDMemento, so this RPC is the migration-path equivalent for
+  // gRPC consumers (React viewer, future clients).  Stateless.
+  rpc GetScanConfiguration(GetScanConfigurationRequest)
+      returns (GetScanConfigurationResponse);
 }
 
 // ---------------------------------------------------------------------------
@@ -139,4 +147,39 @@ message SliceInfo {
 
   // Rotation angle in radians (parsed from filename).
   double angle = 3;
+}
+
+// ---------------------------------------------------------------------------
+// Messages — GetScanConfiguration
+// ---------------------------------------------------------------------------
+
+message GetScanConfigurationRequest {
+  // Optional dataset path.  When non-empty, the server layers any
+  // per-dataset override (e.g. a sidecar config file inside the
+  // dataset directory) on top of the global defaults.  Empty string
+  // requests global defaults only.
+  string dataset_path = 1;
+}
+
+message GetScanConfigurationResponse {
+  // Calibration: mm per pixel in the horizontal scan direction.
+  // Legacy default: 0.005 (ThreeDMemento.pixelDensityHorizontal).
+  double pixel_density_horizontal = 1;
+
+  // Calibration: mm per pixel in the vertical scan direction.
+  // Legacy default: 0.005 (ThreeDMemento.pixelDensityVertical).
+  double pixel_density_vertical = 2;
+
+  // Decimation factor for the metrology detector.
+  // Legacy default: 50 (ThreeDMemento.decimation).
+  int32 decimation = 3;
+
+  // Default finder strategy.
+  // Legacy default: BLACK_ON_WHITE (ThreeDController scanAll/scanOne).
+  FinderStrategy strategy = 4;
+
+  // True if the response includes values overridden by a per-dataset
+  // sidecar file (dataset_path was non-empty and an override was
+  // found).  When false, the response is the global defaults.
+  bool has_dataset_override = 5;
 }
