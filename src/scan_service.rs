@@ -17,6 +17,14 @@ use crate::proto::farisland::threed::v1::{
 /// Java core gRPC endpoint for metrology callback.
 const JAVA_ENDPOINT: &str = "http://127.0.0.1:50051";
 
+/// Legacy defaults for GetScanConfiguration.  Sourced from
+/// ThreeDMemento.java:11-13 (pixel_density_*, decimation) and
+/// ThreeDController scan paths (strategy).  Keep in sync with the
+/// legacy Java reads until the Java path is fully retired.
+const DEFAULT_PIXEL_DENSITY_HORIZONTAL: f64 = 0.005;
+const DEFAULT_PIXEL_DENSITY_VERTICAL: f64 = 0.005;
+const DEFAULT_DECIMATION: i32 = 50;
+
 pub struct ThreeDScanServiceImpl {
     /// Lazy-initialized client to Java MetrologyCallbackService.
     metrology_client:
@@ -234,6 +242,23 @@ impl ThreeDScanService for ThreeDScanServiceImpl {
         }))
     }
 
+    async fn get_scan_configuration(
+        &self,
+        request: Request<pb::GetScanConfigurationRequest>,
+    ) -> Result<Response<pb::GetScanConfigurationResponse>, Status> {
+        let _req = request.into_inner();
+        // Per-dataset sidecar overrides are not yet implemented; return
+        // global legacy defaults and flag has_dataset_override=false.
+        // The dataset_path field is reserved for the future layering.
+        Ok(Response::new(pb::GetScanConfigurationResponse {
+            pixel_density_horizontal: DEFAULT_PIXEL_DENSITY_HORIZONTAL,
+            pixel_density_vertical: DEFAULT_PIXEL_DENSITY_VERTICAL,
+            decimation: DEFAULT_DECIMATION,
+            strategy: pb::FinderStrategy::BlackOnWhite as i32,
+            has_dataset_override: false,
+        }))
+    }
+
     async fn list_datasets(
         &self,
         request: Request<pb::ListDatasetsRequest>,
@@ -268,5 +293,22 @@ impl ThreeDScanService for ThreeDScanServiceImpl {
         };
 
         Ok(Response::new(response))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn legacy_defaults_match_three_d_memento() {
+        // Guard against accidental drift from the legacy Java values.
+        // ThreeDMemento.java:11 decimation=50, :12 pixelDensityHorizontal=0.005,
+        // :13 pixelDensityVertical=0.005. FinderStrategy BLACK_ON_WHITE is the
+        // value used across ThreeDController scan paths.
+        assert_eq!(DEFAULT_DECIMATION, 50);
+        assert_eq!(DEFAULT_PIXEL_DENSITY_HORIZONTAL, 0.005);
+        assert_eq!(DEFAULT_PIXEL_DENSITY_VERTICAL, 0.005);
+        assert_eq!(pb::FinderStrategy::BlackOnWhite as i32, 1);
     }
 }
