@@ -46,6 +46,14 @@ service ThreeDScanService {
   // gRPC consumers (React viewer, future clients).  Stateless.
   rpc GetScanConfiguration(GetScanConfigurationRequest)
       returns (GetScanConfigurationResponse);
+
+  // Fetch the raw PNG bytes of a single slice for client-side preview.
+  // Thin wrapper over std::fs — the server does not decode the image,
+  // so the response is whatever was on disk.  Clients render with their
+  // native image decoder (browser `new Image`, JavaFX `Image`, etc.).
+  // Intended use: dataset preview UI before starting a scan.  Not on
+  // the scan hot path.
+  rpc GetSliceImage(GetSliceImageRequest) returns (GetSliceImageResponse);
 }
 
 // ---------------------------------------------------------------------------
@@ -182,4 +190,33 @@ message GetScanConfigurationResponse {
   // sidecar file (dataset_path was non-empty and an override was
   // found).  When false, the response is the global defaults.
   bool has_dataset_override = 5;
+}
+
+// ---------------------------------------------------------------------------
+// Messages — GetSliceImage
+// ---------------------------------------------------------------------------
+
+message GetSliceImageRequest {
+  // Absolute path to the slice PNG.  Typically the `path` field of a
+  // SliceInfo returned by ListDatasets.
+  string slice_path = 1;
+}
+
+message GetSliceImageResponse {
+  // Raw PNG bytes, as stored on disk.  Empty when success=false.
+  bytes png = 1;
+
+  // Size in bytes of the returned image data (== png.length on
+  // success, 0 on failure).  Convenience for clients that want the
+  // length without calling .length on the byte field.
+  int64 size_bytes = 2;
+
+  // True if the file was read successfully.
+  bool success = 3;
+
+  // Filled when success=false (e.g. "slice_path is empty", "file not
+  // found", "permission denied", "not a regular file").  The server
+  // never echoes raw OS error strings — mapped to a small set of
+  // stable categories.
+  string error_message = 4;
 }

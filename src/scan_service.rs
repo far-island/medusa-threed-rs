@@ -294,6 +294,113 @@ impl ThreeDScanService for ThreeDScanServiceImpl {
 
         Ok(Response::new(response))
     }
+
+    async fn get_slice_image(
+        &self,
+        request: Request<pb::GetSliceImageRequest>,
+    ) -> Result<Response<pb::GetSliceImageResponse>, Status> {
+        let req = request.into_inner();
+        match read_slice_bytes(&req.slice_path) {
+            Ok(bytes) => {
+                let size = bytes.len() as i64;
+                Ok(Response::new(pb::GetSliceImageResponse {
+                    png: bytes,
+                    size_bytes: size,
+                    success: true,
+                    error_message: String::new(),
+                }))
+            }
+            Err(category) => Ok(Response::new(pb::GetSliceImageResponse {
+                png: Vec::new(),
+                size_bytes: 0,
+                success: false,
+                error_message: category.to_string(),
+            })),
+        }
+    }
+}
+
+/// Stable error categories for GetSliceImage.  Raw OS error strings
+/// are deliberately not exposed to clients — they differ across
+/// platforms and locales and break UI assertions.
+#[derive(Debug)]
+enum SliceImageError {
+    EmptyPath,
+    NotFound,
+    PermissionDenied,
+    NotARegularFile,
+    ReadFailed,
+}
+
+impl SliceImageError {
+    fn as_str(&self) -> &'static str {
+        match self {
+            Self::EmptyPath => "slice_path is empty",
+            Self::NotFound => "file not found",
+            Self::PermissionDenied => "permission denied",
+            Self::NotARegularFile => "not a regular file",
+            Self::ReadFailed => "read failed",
+        }
+    }
+}
+
+impl std::fmt::Display for SliceImageError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(self.as_str())
+    }
+}
+
+fn read_slice_bytes(slice_path: &str) -> Result<Vec<u8>, SliceImageError> {
+    if slice_path.is_empty() {
+        return Err(SliceImageError::EmptyPath);
+    }
+    let p = Path::new(slice_path);
+    let meta = std::fs::metadata(p).map_err(|e| match e.kind() {
+        std::io::ErrorKind::NotFound => SliceImageError::NotFound,
+        std::io::ErrorKind::PermissionDenied => SliceImageError::PermissionDenied,
+        _ => SliceImageError::ReadFailed,
+    })?;
+    if !meta.is_file() {
+        return Err(SliceImageError::NotARegularFile);
+    }
+    std::fs::read(p).map_err(|e| match e.kind() {
+        std::io::ErrorKind::NotFound => SliceImageError::NotFound,
+        std::io::ErrorKind::PermissionDenied => SliceImageError::PermissionDenied,
+        _ => SliceImageError::ReadFailed,
+    })
+}
+
+#[cfg(test)]
+mod slice_image_tests {
+    use super::*;
+
+    #[test]
+    fn read_slice_bytes_empty_path() {
+        let err = read_slice_bytes("").unwrap_err();
+        assert_eq!(err.as_str(), "slice_path is empty");
+    }
+
+    #[test]
+    fn read_slice_bytes_not_found() {
+        let err = read_slice_bytes("/tmp/__nonexistent_medusa_slice__.png").unwrap_err();
+        assert_eq!(err.as_str(), "file not found");
+    }
+
+    #[test]
+    fn read_slice_bytes_directory_is_not_a_regular_file() {
+        let err = read_slice_bytes("/tmp").unwrap_err();
+        assert_eq!(err.as_str(), "not a regular file");
+    }
+
+    #[test]
+    fn read_slice_bytes_happy_path() {
+        let tmp = std::env::temp_dir().join("medusa_slice_test.png");
+        let payload: &[u8] = b"\x89PNG\r\n\x1a\nfake-payload";
+        std::fs::write(&tmp, payload).unwrap();
+        let bytes = read_slice_bytes(tmp.to_str().unwrap()).unwrap();
+        assert_eq!(bytes, payload);
+        let _ = std::fs::remove_file(&tmp);
+    }
 }
 
 #[cfg(test)]
