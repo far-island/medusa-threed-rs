@@ -35,6 +35,20 @@ service MeshService {
   // then connects adjacent occupied cells with triangles.
   // Much faster and more robust than Delaunay for 2.5D scanner data.
   rpc GridMesh(GridMeshRequest) returns (GridMeshResponse);
+
+  // Export a MeshData payload to a file on disk in one of the supported
+  // serialization formats (STL, OBJ, PLY). The server writes to
+  // `output_path` using its local filesystem — the caller is responsible
+  // for choosing a path the server process can write to. This mirrors the
+  // existing ExportPTX pattern on PointCloudService (write-in-place,
+  // success boolean + error string, no blob transport back to the client).
+  //
+  // Fallback scope (2026-04-24 DRAFT): STL binary is the MVP format; OBJ
+  // + PLY are marked in MeshExportFormat but the server MAY return
+  // Unimplemented for them until ai / modules land the encoders. Clients
+  // should check `response.success` + `response.format_used` before
+  // assuming parity across formats.
+  rpc ExportMesh(ExportMeshRequest) returns (ExportMeshResponse);
 }
 
 // ---------------------------------------------------------------------------
@@ -88,4 +102,61 @@ message GridMeshResponse {
 
   // Number of unique vertices in the mesh.
   int32 vertex_count = 5;
+}
+
+// ---------------------------------------------------------------------------
+// Messages — ExportMesh (2026-04-24 fallback DRAFT)
+// ---------------------------------------------------------------------------
+
+// Serialization format the server writes to disk.
+enum MeshExportFormat {
+  MESH_EXPORT_FORMAT_UNSPECIFIED = 0;
+  // Binary STL — MVP. Widely supported, no color/uv, per-triangle
+  // normals. Binary format; ASCII STL not supported. Encoder owner:
+  // medusa-ai (MVP).
+  MESH_EXPORT_FORMAT_STL = 1;
+  // Wavefront OBJ — text, supports uv coords (future-proof for
+  // textured meshes). Encoder owner: TBD (fallback, MAY be Unimplemented).
+  MESH_EXPORT_FORMAT_OBJ = 2;
+  // Stanford PLY — binary or ASCII, supports vertex colors + normals.
+  // Encoder owner: TBD (fallback, MAY be Unimplemented).
+  MESH_EXPORT_FORMAT_PLY = 3;
+}
+
+message ExportMeshRequest {
+  // Mesh to serialize. Must be non-empty. Server responds with
+  // success=false and error_message="mesh is empty" when vertex_count == 0
+  // or face_count == 0 — gRPC status stays OK (this service surfaces
+  // per-call errors via the boolean, not via status codes, matching the
+  // existing ExportPTX pattern on PointCloudService).
+  MeshData mesh = 1;
+
+  // Absolute path on the server's filesystem. Server overwrites existing
+  // files — caller is responsible for preventing accidental overwrites.
+  string output_path = 2;
+
+  // Requested format. UNSPECIFIED defaults to STL (MVP).
+  MeshExportFormat format = 3;
+}
+
+message ExportMeshResponse {
+  // True iff the file was successfully written.
+  bool success = 1;
+
+  // Stable, small set of error categories so clients can map to
+  // user-friendly strings:
+  //   "output_path is empty"
+  //   "mesh is empty"
+  //   "format not implemented"   (OBJ/PLY fallback during MVP)
+  //   "permission denied"
+  //   "write failed"
+  // Empty when success=true.
+  string error_message = 2;
+
+  // Number of bytes written. Zero when success=false.
+  uint64 bytes_written = 3;
+
+  // Format actually used (normally == request.format, but UNSPECIFIED
+  // resolves to STL in the response for telemetry clarity).
+  MeshExportFormat format_used = 4;
 }
