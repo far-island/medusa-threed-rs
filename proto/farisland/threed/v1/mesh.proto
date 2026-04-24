@@ -137,6 +137,50 @@ message ExportMeshRequest {
 
   // Requested format. UNSPECIFIED defaults to STL (MVP).
   MeshExportFormat format = 3;
+
+  // ---------------------------------------------------------------------
+  // Format-specific options (2026-04-24 DRAFT 2 for OBJ/PLY encoders).
+  // Servers MAY ignore options that don't apply to the chosen format —
+  // e.g. OBJ ignores `ply_ascii` because OBJ is always text. When an
+  // encoder lands it documents which options it honours; until then the
+  // option fields are inert, forward-compatible defaults. Caller never
+  // needs to know which encoder handles the file — the response's
+  // `format_used` reports the truth.
+  // ---------------------------------------------------------------------
+
+  // When true, the encoder writes a PLY file in ASCII mode. Binary is
+  // the default (smaller files, faster parsing). Ignored for STL (always
+  // binary) and OBJ (always text).
+  //
+  // NOTE: these three options are orthogonal to the format-support
+  // gating described on `error_message`. An OBJ or PLY request with
+  // `ply_ascii=false` still returns `success=false,
+  // error_message="format not implemented"` until the encoder lands —
+  // the flag does not bypass the fallback.
+  bool ply_ascii = 4;
+
+  // When true, the encoder writes vertex normals alongside vertex
+  // positions. STL already encodes per-triangle normals derived from the
+  // winding; this flag is a no-op there. OBJ emits `vn` entries +
+  // face references; PLY emits `property float nx/ny/nz`. Requires the
+  // input `MeshData` to carry normals (future extension — current
+  // MeshData has positions + faces + tex_coords only; normals are
+  // computed by the encoder from triangle geometry when requested).
+  //
+  // COST: when normals are derived from winding (no `MeshData.normals`
+  // yet), the encoder runs an O(face_count) cross-product pass per
+  // request. Cheap for typical meshes (~10⁴ faces) but producers should
+  // know it scales linearly; skip the flag for multi-million-face
+  // meshes when normals aren't needed.
+  bool include_normals = 5;
+
+  // When true and the input `MeshData` carries per-vertex colors, OBJ
+  // emits `usemtl` stubs and PLY emits `property uchar red/green/blue`.
+  // STL does not support vertex colors at all — silently ignored.
+  // Current `MeshData` doesn't carry colors either (same extension path
+  // as `include_normals`). Present here so the contract is stable when
+  // MeshData gains the `colors` field.
+  bool include_vertex_colors = 6;
 }
 
 message ExportMeshResponse {
